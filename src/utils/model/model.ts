@@ -30,6 +30,7 @@ import { isModelAllowed } from './modelAllowlist.js'
 import { type ModelAlias, isModelAlias } from './aliases.js'
 import { capitalize } from '../stringUtils.js'
 import {
+  CHATGPT_CODEX_BALANCED_MODEL,
   CHATGPT_CODEX_DEFAULT_MODEL,
   CHATGPT_CODEX_FAST_MODEL,
   isChatGPTAuthMode,
@@ -136,12 +137,12 @@ function getProviderPrimaryModel(): ModelName | undefined {
 // @[MODEL LAUNCH]: Update the default Opus model (3P providers may lag so keep defaults unchanged).
 export function getDefaultOpusModel(): ModelName {
   const provider = getAPIProvider()
-  if (provider === 'openai' && isChatGPTAuthMode()) {
-    return CHATGPT_CODEX_DEFAULT_MODEL
-  }
   // For OpenAI provider, check OPENAI_DEFAULT_OPUS_MODEL first
   if (provider === 'openai' && process.env.OPENAI_DEFAULT_OPUS_MODEL) {
     return process.env.OPENAI_DEFAULT_OPUS_MODEL
+  }
+  if (provider === 'openai' && isChatGPTAuthMode()) {
+    return CHATGPT_CODEX_DEFAULT_MODEL
   }
   // For Gemini provider, check GEMINI_DEFAULT_OPUS_MODEL
   if (provider === 'gemini' && process.env.GEMINI_DEFAULT_OPUS_MODEL) {
@@ -166,12 +167,12 @@ export function getDefaultOpusModel(): ModelName {
 // @[MODEL LAUNCH]: Update the default Sonnet model (3P providers may lag so keep defaults unchanged).
 export function getDefaultSonnetModel(): ModelName {
   const provider = getAPIProvider()
-  if (provider === 'openai' && isChatGPTAuthMode()) {
-    return CHATGPT_CODEX_DEFAULT_MODEL
-  }
   // For OpenAI provider, check OPENAI_DEFAULT_SONNET_MODEL first
   if (provider === 'openai' && process.env.OPENAI_DEFAULT_SONNET_MODEL) {
     return process.env.OPENAI_DEFAULT_SONNET_MODEL
+  }
+  if (provider === 'openai' && isChatGPTAuthMode()) {
+    return CHATGPT_CODEX_BALANCED_MODEL
   }
   // For Gemini provider, check GEMINI_DEFAULT_SONNET_MODEL
   if (provider === 'gemini' && process.env.GEMINI_DEFAULT_SONNET_MODEL) {
@@ -195,12 +196,12 @@ export function getDefaultSonnetModel(): ModelName {
 // @[MODEL LAUNCH]: Update the default Haiku model (3P providers may lag so keep defaults unchanged).
 export function getDefaultHaikuModel(): ModelName {
   const provider = getAPIProvider()
-  if (provider === 'openai' && isChatGPTAuthMode()) {
-    return CHATGPT_CODEX_FAST_MODEL
-  }
   // For OpenAI provider, check OPENAI_DEFAULT_HAIKU_MODEL first
   if (provider === 'openai' && process.env.OPENAI_DEFAULT_HAIKU_MODEL) {
     return process.env.OPENAI_DEFAULT_HAIKU_MODEL
+  }
+  if (provider === 'openai' && isChatGPTAuthMode()) {
+    return CHATGPT_CODEX_FAST_MODEL
   }
   // For Gemini provider, check GEMINI_DEFAULT_HAIKU_MODEL
   if (provider === 'gemini' && process.env.GEMINI_DEFAULT_HAIKU_MODEL) {

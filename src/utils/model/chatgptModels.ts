@@ -5,6 +5,7 @@ export type ChatGPTCodexModelOption = {
 }
 
 export const CHATGPT_CODEX_DEFAULT_MODEL = 'gpt-5.6-sol'
+export const CHATGPT_CODEX_BALANCED_MODEL = 'gpt-5.6-terra'
 export const CHATGPT_CODEX_FAST_MODEL = 'gpt-5.6-luna'
 
 /**
