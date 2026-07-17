@@ -1,5 +1,7 @@
 import { randomUUID } from 'crypto'
 import type { BetaRawMessageStreamEvent } from '@anthropic-ai/sdk/resources/beta/messages/messages.mjs'
+import { openaiAdapter } from '../../providerUsage/adapters/openai.js'
+import { updateProviderBuckets } from '../../providerUsage/store.js'
 import { getValidChatGPTAuth } from './chatgptAuth.js'
 import { getOpenAIPromptCacheKey } from './openaiShared.js'
 
@@ -515,6 +517,16 @@ export async function createChatGPTResponsesStream(params: {
     throw new Error(
       `ChatGPT Responses API request failed (${response.status})${text ? `: ${text.slice(0, 500)}` : ''}`,
     )
+  }
+  // Feed Codex plan-limit headers into the shared provider usage store so
+  // /usage and statusline can show live 5h/7d windows without a separate poll.
+  try {
+    updateProviderBuckets(
+      'openai',
+      openaiAdapter.parseHeaders(response.headers),
+    )
+  } catch {
+    // Usage tracking must never break the request path.
   }
   return parseSSE(response)
 }

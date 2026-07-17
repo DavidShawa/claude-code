@@ -1,13 +1,27 @@
 import * as React from 'react';
 import { useEffect, useState } from 'react';
 import { extraUsage as extraUsageCommand } from 'src/commands/extra-usage/index.js';
-import { formatCost } from 'src/cost-tracker.js';
+import {
+  formatCost,
+  getTotalCacheCreationInputTokens,
+  getTotalCacheReadInputTokens,
+  getTotalCost,
+  getTotalInputTokens,
+  getTotalOutputTokens,
+} from 'src/cost-tracker.js';
 import { getSubscriptionType } from 'src/utils/auth.js';
 import { useTerminalSize } from '../../hooks/useTerminalSize.js';
 import { Box, Text } from '@anthropic/ink';
 import { useKeybinding } from '../../keybindings/useKeybinding.js';
 import { type ExtraUsage, fetchUtilization, type RateLimit, type Utilization } from '../../services/api/usage.js';
-import { formatResetText } from '../../utils/format.js';
+import {
+  type OpenAIUtilization,
+  fetchOpenAIUtilization,
+  shouldShowOpenAIUsage,
+} from '../../services/api/openai/usage.js';
+import { isChatGPTAuthEnabled } from '../../services/api/openai/chatgptAuth.js';
+import { setStatusLineUsageFromClaude, setStatusLineUsageFromOpenAI } from '../../services/statusLineRateLimits.js';
+import { formatNumber, formatResetText } from '../../utils/format.js';
 import { logError } from '../../utils/log.js';
 import { jsonStringify } from '../../utils/slowOperations.js';
 import { ConfigurableShortcutHint } from '../ConfigurableShortcutHint.js';
@@ -86,14 +100,156 @@ function LimitBar({ title, limit, maxWidth, showTimeInReset = true, extraSubtext
   }
 }
 
-export function Usage(): React.ReactNode {
+function SessionCostSummary(): React.ReactNode {
+  const cost = getTotalCost();
+  const input = getTotalInputTokens();
+  const output = getTotalOutputTokens();
+  const cacheRead = getTotalCacheReadInputTokens();
+  const cacheWrite = getTotalCacheCreationInputTokens();
+  return (
+    <Box flexDirection="column">
+      <Text bold>This session</Text>
+      <Text dimColor>
+        {formatCost(cost)} · {formatNumber(input)} in / {formatNumber(output)} out · {formatNumber(cacheRead)} cache
+        read / {formatNumber(cacheWrite)} cache write
+      </Text>
+    </Box>
+  );
+}
+
+function UsageFooter({ showRetry }: { showRetry?: boolean }): React.ReactNode {
+  return (
+    <Text dimColor>
+      <Byline>
+        {showRetry ? (
+          <ConfigurableShortcutHint action="settings:retry" context="Settings" fallback="r" description="retry" />
+        ) : null}
+        <ConfigurableShortcutHint action="confirm:no" context="Settings" fallback="Esc" description="cancel" />
+      </Byline>
+    </Text>
+  );
+}
+
+/**
+ * OpenAI / ChatGPT plan usage panel.
+ * Completely separate from Claude.ai subscription fetchUtilization().
+ */
+function OpenAIUsagePanel({ maxWidth }: { maxWidth: number }): React.ReactNode {
+  const [utilization, setUtilization] = useState<OpenAIUtilization | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const isChatGPT = isChatGPTAuthEnabled();
+
+  const loadUtilization = React.useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const data = await fetchOpenAIUtilization();
+      setUtilization(data);
+      // Keep status line in sync with the same /usage data the user just loaded.
+      setStatusLineUsageFromOpenAI(data);
+    } catch (err) {
+      logError(err as Error);
+      setError(err instanceof Error ? err.message : 'Failed to load OpenAI usage data');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadUtilization();
+  }, [loadUtilization]);
+
+  useKeybinding(
+    'settings:retry',
+    () => {
+      void loadUtilization();
+    },
+    { context: 'Settings', isActive: !!error && !isLoading },
+  );
+
+  if (error) {
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text color="error">Error: {error}</Text>
+        <SessionCostSummary />
+        <UsageFooter showRetry />
+      </Box>
+    );
+  }
+
+  if (!utilization || isLoading) {
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text dimColor>Loading OpenAI usage data…</Text>
+        <UsageFooter />
+      </Box>
+    );
+  }
+
+  const hasWindows = utilization.windows.some(w => w.utilization !== null);
+  const planLabel = utilization.plan_type ? `Plan: ${utilization.plan_type}` : null;
+
+  return (
+    <Box flexDirection="column" gap={1} width="100%">
+      {planLabel && <Text bold>{planLabel}</Text>}
+
+      {hasWindows ? (
+        utilization.windows.map(
+          (window, index) =>
+            window.utilization !== null && (
+              <LimitBar
+                key={`${window.label}-${index}`}
+                title={window.label}
+                limit={{
+                  utilization: window.utilization,
+                  resets_at: window.resets_at,
+                }}
+                maxWidth={maxWidth}
+              />
+            ),
+        )
+      ) : (
+        <Text dimColor>
+          {isChatGPT
+            ? 'No ChatGPT plan quota data available yet. Make a request or open chatgpt.com/codex/settings/usage.'
+            : 'No rate-limit headers yet. Send a request first to capture RPM/TPM from the API response.'}
+        </Text>
+      )}
+
+      {utilization.credits?.has_credits && (
+        <Box flexDirection="column">
+          <Text bold>Credits</Text>
+          <Text dimColor>
+            {utilization.credits.unlimited
+              ? 'Unlimited'
+              : typeof utilization.credits.balance === 'number'
+                ? `Balance: ${utilization.credits.balance}`
+                : 'Available'}
+          </Text>
+        </Box>
+      )}
+
+      <SessionCostSummary />
+
+      {utilization.source === 'api_headers' && (
+        <Text dimColor>Source: last API response headers (RPM/TPM or Codex plan headers)</Text>
+      )}
+      {utilization.source === 'chatgpt' && <Text dimColor>Source: ChatGPT Codex usage API</Text>}
+
+      <UsageFooter />
+    </Box>
+  );
+}
+
+/**
+ * Claude.ai subscription usage — original /usage panel behavior.
+ * Do not merge OpenAI logic into this path.
+ */
+function ClaudeUsagePanel({ maxWidth }: { maxWidth: number }): React.ReactNode {
   const [utilization, setUtilization] = useState<Utilization | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const { columns } = useTerminalSize();
-
-  const availableWidth = columns - 2; // 2 for screen padding
-  const maxWidth = Math.min(availableWidth, 80);
 
   const loadUtilization = React.useCallback(async () => {
     setIsLoading(true);
@@ -101,6 +257,9 @@ export function Usage(): React.ReactNode {
     try {
       const data = await fetchUtilization();
       setUtilization(data);
+      if (data) {
+        setStatusLineUsageFromClaude(data);
+      }
     } catch (err) {
       logError(err as Error);
       const axiosError = err as { response?: { data?: unknown } };
@@ -191,6 +350,20 @@ export function Usage(): React.ReactNode {
       </Text>
     </Box>
   );
+}
+
+export function Usage(): React.ReactNode {
+  const { columns } = useTerminalSize();
+  const availableWidth = columns - 2; // 2 for screen padding
+  const maxWidth = Math.min(availableWidth, 80);
+
+  // OpenAI / ChatGPT path is fully separate so Claude.ai subscription
+  // behavior stays identical when firstParty provider is active.
+  if (shouldShowOpenAIUsage()) {
+    return <OpenAIUsagePanel maxWidth={maxWidth} />;
+  }
+
+  return <ClaudeUsagePanel maxWidth={maxWidth} />;
 }
 
 type ExtraUsageSectionProps = {

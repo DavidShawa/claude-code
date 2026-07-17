@@ -51,17 +51,76 @@ function computeUtilization(
 }
 
 /**
- * OpenAI-compatible rate-limit headers.
+ * Classify Codex primary/secondary window duration (minutes) into a label.
+ */
+function codexWindowLabel(
+  kind: 'primary' | 'secondary',
+  windowMinutes: string | null,
+): string {
+  const mins = windowMinutes !== null ? Number(windowMinutes) : NaN
+  if (Number.isFinite(mins) && mins > 0) {
+    const seconds = mins * 60
+    // Match codex-cli-usage tolerance (±10%).
+    if (Math.abs(seconds - 5 * 3600) / (5 * 3600) <= 0.1) return '5-hour'
+    if (Math.abs(seconds - 7 * 24 * 3600) / (7 * 24 * 3600) <= 0.1) {
+      return 'Weekly'
+    }
+    if (Math.abs(seconds - 24 * 3600) / (24 * 3600) <= 0.1) return 'Daily'
+  }
+  return kind === 'primary' ? 'Primary' : 'Secondary'
+}
+
+/**
+ * Parse ChatGPT Codex plan-limit headers returned by
+ * chatgpt.com/backend-api/codex/responses.
  *
+ *   x-codex-primary-used-percent / window-minutes / reset-after-seconds
+ *   x-codex-secondary-used-percent / ...
+ *
+ * Utilization is 0–100 in headers; we normalize to 0–1 for the store.
+ */
+function parseCodexPlanHeaders(headers: Headers): ProviderUsageBucket[] {
+  const buckets: ProviderUsageBucket[] = []
+  for (const kind of ['primary', 'secondary'] as const) {
+    const used = headers.get(`x-codex-${kind}-used-percent`)
+    if (used === null) continue
+    const pct = Number(used)
+    if (!Number.isFinite(pct)) continue
+    const resetAfter = headers.get(`x-codex-${kind}-reset-after-seconds`)
+    const resetSecs = resetAfter !== null ? Number(resetAfter) : NaN
+    const windowMinutes = headers.get(`x-codex-${kind}-window-minutes`)
+    buckets.push({
+      kind: kind === 'primary' ? 'session' : 'weekly',
+      label: codexWindowLabel(kind, windowMinutes),
+      utilization: Math.min(1, Math.max(0, pct / 100)),
+      ...(Number.isFinite(resetSecs) && resetSecs > 0
+        ? { resetsAt: Math.floor(Date.now() / 1000) + Math.floor(resetSecs) }
+        : {}),
+    })
+  }
+  return buckets
+}
+
+/**
+ * OpenAI-compatible rate-limit headers + ChatGPT Codex plan headers.
+ *
+ * Standard OpenAI-compatible:
  *   x-ratelimit-limit-requests     / x-ratelimit-remaining-requests     / x-ratelimit-reset-requests
  *   x-ratelimit-limit-tokens       / x-ratelimit-remaining-tokens       / x-ratelimit-reset-tokens
  *
+ * Codex Responses (ChatGPT OAuth):
+ *   x-codex-primary-* / x-codex-secondary-*
+ *
  * Works for OpenAI, DeepSeek, Moonshot, Grok (xAI) and many self-hosted
- * OpenAI-compatible gateways.
+ * OpenAI-compatible gateways. Codex plan headers take priority when present.
  */
 export const openaiAdapter: ProviderUsageAdapter = {
   providerId: 'openai',
   parseHeaders(headers): ProviderUsageBucket[] {
+    // Prefer Codex plan windows when present (ChatGPT subscription traffic).
+    const codex = parseCodexPlanHeaders(headers)
+    if (codex.length > 0) return codex
+
     const buckets: ProviderUsageBucket[] = []
 
     const reqUtil = computeUtilization(
