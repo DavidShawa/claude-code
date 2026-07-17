@@ -17,6 +17,7 @@ import { getSessionId } from '../../../bootstrap/state.js'
 import { getOpenAIClient } from './client.js'
 import {
   formatOpenAIPromptCacheKey,
+  isOfficialOpenAIBaseURL,
   updateOpenAIUsage,
 } from './openaiShared.js'
 import {
@@ -351,10 +352,14 @@ export async function* queryModelOpenAI(
     )
 
     const useChatGPTResponses = isChatGPTAuthEnabled()
-    // ChatGPT OAuth is the only route where CCB controls and relies on OpenAI's
-    // prompt-cache contract. Scope the key to the real conversation so resumed
-    // turns stay sticky while unrelated sessions do not share a routing bucket.
-    const promptCacheKey = useChatGPTResponses
+    // OpenAI's official OAuth and API-key routes share the same prompt-cache
+    // contract. Scope the key to the real conversation so resumed turns stay
+    // sticky while unrelated sessions do not share a routing bucket. Generic
+    // compatible endpoints intentionally receive no OpenAI-specific fields.
+    const useOfficialOpenAICache =
+      useChatGPTResponses ||
+      isOfficialOpenAIBaseURL(process.env.OPENAI_BASE_URL)
+    const promptCacheKey = useOfficialOpenAICache
       ? formatOpenAIPromptCacheKey(getSessionId())
       : ''
 
@@ -395,10 +400,12 @@ export async function* queryModelOpenAI(
               enableThinking,
               maxTokens,
               temperatureOverride: options.temperatureOverride,
+              promptCacheKey: promptCacheKey || undefined,
             }),
             { signal },
           ),
           openaiModel,
+          { includeCacheWriteTokens: useOfficialOpenAICache },
         )
 
     // 12. Convert OpenAI stream to Anthropic events, then process into

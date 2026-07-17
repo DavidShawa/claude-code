@@ -10,6 +10,31 @@
  */
 
 /**
+ * Whether a configured base URL resolves directly to OpenAI's official API.
+ *
+ * An absent URL means the OpenAI SDK default (`api.openai.com`). Regional
+ * endpoints are subdomains of `api.openai.com`. Keep this strict so generic
+ * OpenAI-compatible providers never receive OpenAI-specific cache parameters.
+ */
+export function isOfficialOpenAIBaseURL(baseURL: string | undefined): boolean {
+  if (!baseURL?.trim()) return true
+
+  try {
+    const url = new URL(baseURL)
+    const isOfficialHost =
+      url.hostname === 'api.openai.com' ||
+      url.hostname.endsWith('.api.openai.com')
+    return (
+      url.protocol === 'https:' &&
+      isOfficialHost &&
+      (url.port === '' || url.port === '443')
+    )
+  } catch {
+    return false
+  }
+}
+
+/**
  * Build a stable OpenAI `prompt_cache_key` for a session.
  *
  * OpenAI automatic prefix caching benefits from routing sticky keys so multi-turn

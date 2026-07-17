@@ -587,7 +587,7 @@ describe('queryModelOpenAI — stream_events forwarded', () => {
 })
 
 describe('queryModelOpenAI — max_tokens forwarded to request', () => {
-  test('buildOpenAIRequestBody includes max_tokens in the request payload', async () => {
+  test('official OpenAI requests include max_tokens and a session cache key', async () => {
     _nextEvents = [
       makeMessageStart(),
       makeContentBlockStart(0, 'text'),
@@ -601,6 +601,17 @@ describe('queryModelOpenAI — max_tokens forwarded to request', () => {
 
     expect(_lastCreateArgs).not.toBeNull()
     expect(_lastCreateArgs!.max_tokens).toBe(8192)
+    expect(_lastCreateArgs!.prompt_cache_key).toStartWith('ccb:')
+  })
+
+  test('compatible providers do not receive OpenAI cache parameters', async () => {
+    _nextEvents = [makeMessageStart(), makeMessageStop()]
+
+    await runQueryModel(_nextEvents, {
+      OPENAI_BASE_URL: 'https://api.deepseek.com/v1',
+    })
+
+    expect(_lastCreateArgs).not.toBeNull()
     expect('prompt_cache_key' in _lastCreateArgs!).toBe(false)
   })
 })

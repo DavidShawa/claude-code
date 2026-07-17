@@ -13,10 +13,10 @@ import { randomUUID } from 'crypto'
  *   finish_reason            → message_delta(stop_reason) + message_stop
  *
  * Usage field mapping (OpenAI → Anthropic):
- *   prompt_tokens - cached_tokens             → input_tokens (non-cached input only)
+ *   prompt_tokens - cached_tokens - cache_write_tokens → input_tokens
  *   completion_tokens                         → output_tokens
  *   prompt_tokens_details.cached_tokens       → cache_read_input_tokens
- *   (no OpenAI equivalent)                    → cache_creation_input_tokens (always 0)
+ *   prompt_tokens_details.cache_write_tokens  → cache_creation_input_tokens
  *
  *   All four fields are emitted in the post-loop message_delta (not message_start)
  *   so that trailing usage chunks (sent after finish_reason by some
@@ -35,6 +35,7 @@ import { randomUUID } from 'crypto'
 export async function* adaptOpenAIStreamToAnthropic(
   stream: AsyncIterable<ChatCompletionChunk>,
   model: string,
+  options?: { includeCacheWriteTokens?: boolean },
 ): AsyncGenerator<BetaRawMessageStreamEvent, void> {
   const messageId = `msg_${randomUUID().replace(/-/g, '').slice(0, 24)}`
 
@@ -55,11 +56,12 @@ export async function* adaptOpenAIStreamToAnthropic(
 
   // Track usage — all four Anthropic fields, populated from OpenAI usage fields:
   // rawInputTokens tracks the raw prompt_tokens (OpenAI total, including cached).
-  // inputTokens is the derived Anthropic value (non-cached only = rawInputTokens - cachedReadTokens).
+  // inputTokens is the derived Anthropic value (non-cached only = raw total - cache reads - cache writes).
   let rawInputTokens = 0
   let inputTokens = 0
   let outputTokens = 0
   let cachedReadTokens = 0
+  let cachedWriteTokens = 0
 
   // Track all open content block indices (for cleanup)
   const openBlockIndices = new Set<number>()
@@ -79,12 +81,27 @@ export async function* adaptOpenAIStreamToAnthropic(
         ((chunk.usage as any).prompt_tokens_details?.cached_tokens as
           | number
           | undefined) ?? cachedReadTokens
+      const rawCacheWrite = options?.includeCacheWriteTokens
+        ? (((chunk.usage as any).prompt_tokens_details?.cache_write_tokens as
+            | number
+            | undefined) ?? cachedWriteTokens)
+        : 0
       // Anthropic's input_tokens = non-cached input only. OpenAI's prompt_tokens
-      // includes cached tokens, so subtract. Clamp to 0 in case cached > total
-      // due to a streaming race.
-      inputTokens = Math.max(0, rawInputTokens - rawCached)
+      // includes cache reads and writes, so subtract both. Clamp segments in
+      // priority order to keep the four usage fields mutually exclusive.
+      cachedReadTokens = Math.min(
+        Math.max(0, rawCached),
+        Math.max(0, rawInputTokens),
+      )
+      cachedWriteTokens = Math.min(
+        Math.max(0, rawCacheWrite),
+        Math.max(0, rawInputTokens - cachedReadTokens),
+      )
+      inputTokens = Math.max(
+        0,
+        rawInputTokens - cachedReadTokens - cachedWriteTokens,
+      )
       outputTokens = chunk.usage.completion_tokens ?? outputTokens
-      cachedReadTokens = rawCached
     }
 
     // Emit message_start on first chunk
@@ -104,7 +121,7 @@ export async function* adaptOpenAIStreamToAnthropic(
           usage: {
             input_tokens: inputTokens,
             output_tokens: 0,
-            cache_creation_input_tokens: 0,
+            cache_creation_input_tokens: cachedWriteTokens,
             cache_read_input_tokens: cachedReadTokens,
           },
         },
@@ -316,7 +333,7 @@ export async function* adaptOpenAIStreamToAnthropic(
         input_tokens: inputTokens,
         output_tokens: outputTokens,
         cache_read_input_tokens: cachedReadTokens,
-        cache_creation_input_tokens: 0,
+        cache_creation_input_tokens: cachedWriteTokens,
       },
     } as BetaRawMessageStreamEvent
 
