@@ -40,7 +40,7 @@ import {
   buildResponsesRequest,
   createChatGPTResponsesStream,
 } from '../services/api/openai/responsesAdapter.js'
-import { getOpenAIPromptCacheKey } from '../services/api/openai/openaiShared.js'
+import { formatOpenAIPromptCacheKey } from '../services/api/openai/openaiShared.js'
 import {
   anthropicMessagesToOpenAI,
   resolveOpenAIModel,
@@ -575,7 +575,7 @@ async function sideQueryViaChatGPTResponses(
     messages: openaiMessages,
     tools: openaiTools ?? [],
     toolChoice: openaiToolChoice,
-    promptCacheKey: getOpenAIPromptCacheKey(),
+    promptCacheKey: formatOpenAIPromptCacheKey(getSessionId()),
   })
 
   const rawStream = await createChatGPTResponsesStream({

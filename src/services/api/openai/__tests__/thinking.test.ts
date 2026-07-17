@@ -203,8 +203,6 @@ describe('buildOpenAIRequestBody — thinking params', () => {
     messages: [{ role: 'user', content: 'hello' }],
     tools: [] as any[],
     toolChoice: undefined as any,
-    // Avoid depending on bootstrap session state in pure request-body tests.
-    promptCacheKey: 'ccb:test-session',
   } as any
 
   test('includes official DeepSeek API thinking format when enabled', () => {
@@ -212,13 +210,13 @@ describe('buildOpenAIRequestBody — thinking params', () => {
     expect(body.thinking).toEqual({ type: 'enabled' })
   })
 
-  test('includes prompt_cache_key for sticky OpenAI cache routing', () => {
+  test('does not send OAuth-only prompt_cache_key to compatible providers', () => {
     const body = buildOpenAIRequestBody({
       ...baseParams,
       enableThinking: false,
       maxTokens: 1024,
     })
-    expect(body.prompt_cache_key).toBe('ccb:test-session')
+    expect('prompt_cache_key' in body).toBe(false)
   })
 
   test('includes vLLM/self-hosted thinking format when enabled', () => {

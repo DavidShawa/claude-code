@@ -3,7 +3,6 @@ import type { BetaRawMessageStreamEvent } from '@anthropic-ai/sdk/resources/beta
 import { openaiAdapter } from '../../providerUsage/adapters/openai.js'
 import { updateProviderBuckets } from '../../providerUsage/store.js'
 import { getValidChatGPTAuth } from './chatgptAuth.js'
-import { getOpenAIPromptCacheKey } from './openaiShared.js'
 
 type ResponsesInputItem = Record<string, unknown>
 type ResponsesTool = Record<string, unknown>
@@ -178,8 +177,8 @@ export function buildResponsesRequest(params: {
   tools: unknown[]
   toolChoice: unknown
   reasoningEffort?: ResponsesReasoningEffort
-  /** Override for tests; production uses the current CCB session id. */
-  promptCacheKey?: string
+  /** Session-scoped key supplied only by the ChatGPT OAuth route. */
+  promptCacheKey: string
 }): ResponsesRequest {
   const { input, instructions } = convertMessagesToResponsesInput(
     params.messages,
@@ -199,9 +198,9 @@ export function buildResponsesRequest(params: {
       ? { reasoning: { effort: params.reasoningEffort } }
       : {}),
     parallel_tool_calls: true,
-    // Same process/session → same key so OpenAI can sticky-route to a cache node.
+    // Same OAuth session → same key so OpenAI can sticky-route to a cache node.
     // Must not hash the full message list (would change every turn).
-    prompt_cache_key: params.promptCacheKey ?? getOpenAIPromptCacheKey(),
+    prompt_cache_key: params.promptCacheKey,
   }
 }
 

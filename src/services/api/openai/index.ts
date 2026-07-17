@@ -13,8 +13,12 @@ import type {
 } from '../../../types/message.js'
 import type { AgentId } from '../../../types/ids.js'
 import type { Tools } from '../../../Tool.js'
+import { getSessionId } from '../../../bootstrap/state.js'
 import { getOpenAIClient } from './client.js'
-import { getOpenAIPromptCacheKey, updateOpenAIUsage } from './openaiShared.js'
+import {
+  formatOpenAIPromptCacheKey,
+  updateOpenAIUsage,
+} from './openaiShared.js'
 import {
   anthropicMessagesToOpenAI,
   resolveOpenAIModel,
@@ -346,19 +350,22 @@ export async function* queryModelOpenAI(
       options.maxOutputTokensOverride,
     )
 
-    // Sticky cache routing key: stable for this CCB process so OpenAI can
-    // co-locate multi-turn requests on the same cache-bearing node. Never hash
-    // the full message body (that changes every turn and defeats routing).
-    const promptCacheKey = getOpenAIPromptCacheKey()
+    const useChatGPTResponses = isChatGPTAuthEnabled()
+    // ChatGPT OAuth is the only route where CCB controls and relies on OpenAI's
+    // prompt-cache contract. Scope the key to the real conversation so resumed
+    // turns stay sticky while unrelated sessions do not share a routing bucket.
+    const promptCacheKey = useChatGPTResponses
+      ? formatOpenAIPromptCacheKey(getSessionId())
+      : ''
 
     logForDebugging(
-      `[OpenAI] Calling model=${openaiModel}, messages=${openaiMessages.length}, tools=${openaiTools.length}, thinking=${enableThinking}, prompt_cache_key=${promptCacheKey}`,
+      `[OpenAI] Calling model=${openaiModel}, messages=${openaiMessages.length}, tools=${openaiTools.length}, thinking=${enableThinking}${promptCacheKey ? `, prompt_cache_key=${promptCacheKey}` : ''}`,
     )
 
     // 11. Call OpenAI API with streaming. ChatGPT subscription auth uses the
     // Codex Responses backend; API-key/OpenAI-compatible auth keeps the
     // existing Chat Completions adapter.
-    const adaptedStream = isChatGPTAuthEnabled()
+    const adaptedStream = useChatGPTResponses
       ? adaptResponsesStreamToAnthropic(
           await createChatGPTResponsesStream({
             request: buildResponsesRequest({
@@ -388,7 +395,6 @@ export async function* queryModelOpenAI(
               enableThinking,
               maxTokens,
               temperatureOverride: options.temperatureOverride,
-              promptCacheKey,
             }),
             { signal },
           ),
