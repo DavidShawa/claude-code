@@ -79,8 +79,31 @@ for (const file of files) {
 }
 BUN_DESTRUCTURE.lastIndex = 0
 
+// Transpile `using` / `await using` → `const` for Node.js compatibility.
+// Node.js v22 only supports Explicit Resource Management behind
+// --js-explicit-resource-management (default off). Bun leaves `using` intact.
+//
+// Semantics note: dispose is not called after this rewrite.
+// - slowLogging (SLOW_OPERATION_LOGGING off): no-op disposable — fine.
+// - MemoryPrefetch: turn-level abort still cancels; only exit telemetry is lost.
+// Prefer rewriting real resources (file handles) to try/finally in source.
+// Does not match C# snippets like `using System;` (requires `=`).
+let usingPatched = 0
+const USING_DECL = /\b(?:await\s+)?using\s+(\w+)\s*=/g
+for (const file of files) {
+  if (!file.endsWith('.js')) continue
+  const filePath = join(outdir, file)
+  const content = await readFile(filePath, 'utf-8')
+  USING_DECL.lastIndex = 0
+  if (USING_DECL.test(content)) {
+    USING_DECL.lastIndex = 0
+    await writeFile(filePath, content.replace(USING_DECL, 'const $1 ='))
+    usingPatched++
+  }
+}
+
 console.log(
-  `Bundled ${result.outputs.length} files to ${outdir}/ (patched ${patched} for import.meta.require, ${bunPatched} for Bun destructure)`,
+  `Bundled ${result.outputs.length} files to ${outdir}/ (patched ${patched} for import.meta.require, ${bunPatched} for Bun destructure, ${usingPatched} for using→const)`,
 )
 
 // Step 4: Copy native .node addon files (audio-capture) and vendored binaries (ripgrep)

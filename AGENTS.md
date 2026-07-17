@@ -76,12 +76,30 @@ bun run docs:dev
 
 ### Runtime & Build
 
-- **Runtime**: Bun (not Node.js). All imports, builds, and execution use Bun APIs.
-- **Build**: `build.ts` 执行 `Bun.build()` with `splitting: true`，入口 `src/entrypoints/cli.tsx`，输出 `dist/cli.js` + chunk files。Build 默认启用 19 个 feature（见下方 Feature Flag 段）。构建后自动替换 `import.meta.require` 为 Node.js 兼容版本（产物 bun/node 都可运行）。构建时会将 `vendor/audio-capture/` 和 `src/utils/vendor/ripgrep/` 复制到 `dist/vendor/` 下。
-- **Build (Vite)**: `vite.config.ts` + `scripts/post-build.ts`，代码分割模式，chunk 输出到 `dist/chunks/`。post-build 遍历 `dist/` 和 `dist/chunks/` 下所有 `.js` 文件做 `globalThis.Bun` 解构 patch，复制 vendor 文件到 `dist/vendor/`。
+- **Dev Runtime**: Bun。日常开发、测试、`bun run build` 均在 Bun 上执行；源码可使用 Bun API / `bun:bundle`。
+- **Product Runtime（硬约束）**: 构建产物必须 **Bun 与 Node.js 双可运行**（见 README：`ccb` = Node，`ccb-bun` = Bun）。**默认用户入口是 Node**（`dist/cli-node.js` → `dist/cli.js`）。只在 Bun 下 smoke 不算验收通过。
+- **Build**: `build.ts` 执行 `Bun.build({ target: 'bun', splitting: true })`，入口 `src/entrypoints/cli.tsx`，输出 `dist/cli.js` + chunk files。Build 默认启用 feature 列表见 `scripts/defines.ts` / `DEFAULT_BUILD_FEATURES`。构建时复制 `vendor/audio-capture/`、`src/utils/vendor/ripgrep/` 到 `dist/vendor/`，并生成 `dist/cli-bun.js` / `dist/cli-node.js`。
+- **Node 兼容后处理（`build.ts` 必须保持完整）**: Bun 不会降级 Node 默认不支持的语法。post-process 当前包括：
+  1. `import.meta.require` → Node 可运行的 `createRequire` 回退
+  2. 未守卫的 `globalThis.Bun` 解构 → 存在性判断
+  3. **`using` / `await using` → `const`**（Explicit Resource Management；Node 22 默认关闭，需 `--js-explicit-resource-management` 才开）。**勿只匹配 `using _`**，任意绑定名（如 `fh`、`pendingMemoryPrefetch`）都要覆盖。注意不要误伤字符串里的 C# `using System;`（匹配需带 `=`）。
+- **源码层对 `using` 的正确写法**:
+  - **真实资源（文件句柄等）**：源码直接写 `try/finally` + `close()`，不要依赖 post-process 的 `using → const`（const 不会调用 dispose，会泄漏）。
+  - **no-op disposable**（如 `slowLogging` 在 `SLOW_OPERATION_LOGGING` 关闭时）：可用 `using _ = ...`，由 build 降级为 `const`。
+  - **有 dispose 语义但可降级**（如 MemoryPrefetch 退出遥测）：允许 `using`，接受 Node 路径下 dispose 不触发；关键取消仍应挂在 turn-level abort 上。
+- **Build (Vite)**: `vite.config.ts` + `scripts/vite-plugin-feature-flags.ts` + `scripts/post-build.ts`。feature flag 替换与 **`using`/`await using` → `const`** 在 vite 插件中完成；post-build 再做 Bun 解构 patch、vendor 复制、双入口生成。改 Node 兼容逻辑时 **`build.ts` 与 vite 插件必须同步**。
 - **Vendor 路径解析**: 构建后 chunk 文件位于 `dist/` 或 `dist/chunks/` 下，vendor 二进制在 `dist/vendor/`。`src/utils/distRoot.ts` 提供共享的 `distRoot` 函数，通过 `import.meta.url` 路径中 `lastIndexOf('dist')` 或 `lastIndexOf('src')` 定位根目录。`ripgrep.ts`、`computerUse/setup.ts`、`claudeInChrome/setup.ts`、`updateCCB.ts` 均使用 `distRoot` 而非内联 `import.meta.url` 路径推算。`packages/audio-capture-napi/src/index.ts` 有独立的 `lastIndexOf('dist')` 逻辑，功能等价。
 - **为什么 Vite 必须代码分割**: Bun/JSC 会全量解析单个大 JS 文件的 bytecode 和 JIT，单文件 17MB 产物导致 RSS 暴涨至 ~1GB（Node/V8 懒解析仅需 ~220MB）。代码分割为 600+ 小 chunk 后 Bun 按需加载，`--version` RSS 从 966MB 降至 35MB，完整加载从 1GB+ 降至 ~500MB。
 - **Dev mode**: `scripts/dev.ts` 通过 Bun `-d` flag 注入 `MACRO.*` defines，运行 `src/entrypoints/cli.tsx`。默认启用全部 feature。
+- **Build 后强制 smoke（Node）**: 任何改动了 `build.ts`、vite 插件、entry、或可能进入 bundle 的语法后，构建完成必须用 **Node** 验收，不能只看 Bun build 成功日志：
+
+  ```bash
+  bun run build
+  node dist/cli-node.js --version   # 必须成功；SyntaxError 即 Node 兼容回归
+  # 若本机已 link 全局包：ccb --version
+  ```
+
+  典型回归：`SyntaxError: Unexpected identifier` 指向 `using` / `await using` — 说明 post-process 漏匹配或源码误用了未降级的 ERM 语法。
 - **Module system**: ESM (`"type": "module"`), TSX with `react-jsx` transform.
 - **Monorepo**: Bun workspaces — 17 个 workspace packages + 若干辅助目录 in `packages/` resolved via `workspace:*`。
 - **Lint/Format**: Biome (`biome.json`)。覆盖 `src/`、`scripts/`、`packages/` 全项目（含 `packages/@ant/`）。`bun run lint` / `bun run lint:fix` / `bun run format` / `bun run check` / `bun run check:fix`。42 条规则因 decompiled 代码被关闭，仅保留 `recommended` 基线。
@@ -386,7 +404,7 @@ bun run precheck
 - **`bun:bundle` import** — `import { feature } from 'bun:bundle'` 是 Bun 内置模块，由运行时/构建器解析。不要用自定义函数替代它。**`feature()` 只能直接用在 `if` 语句或三元表达式的条件位置**（Bun 编译器限制），不能赋值给变量、不能放在箭头函数体里、不能作为 `&&` 链的一部分。正确：`if (feature('X')) {}` 或 `feature('X') ? a : b`。
 - **`src/` path alias** — tsconfig maps `src/*` to `./src/*`. Imports like `import { ... } from 'src/utils/...'` are valid.
 - **MACRO defines** — 集中管理在 `scripts/defines.ts`。Dev mode 通过 `bun -d` 注入，build 通过 `Bun.build({ define })` 注入。修改版本号等常量只改这个文件。
-- **构建产物兼容 Node.js** — `build.ts` 会自动后处理 `import.meta.require`，产物可直接用 `node dist/cli.js` 运行。
+- **构建产物兼容 Node.js（硬约束）** — README 约定 `ccb` 走 Node、`ccb-bun` 走 Bun；`bun run build` 产物必须双 runtime 可启动。`build.ts` 后处理：`import.meta.require`、`globalThis.Bun` 解构、**全部** `using`/`await using`→`const`。真实资源在源码用 `try/finally`；改 build/插件后必须 `node dist/cli-node.js --version` 验收（详见上方 Runtime & Build）。
 - **Biome 配置** — 42 条 lint 规则因 decompiled 代码被关闭，仅保留 `recommended` 基线。格式化覆盖全项目（`src/`、`scripts/`、`packages/`，含 `packages/@ant/`）。`.tsx` 文件用 120 行宽 + 强制分号；其他文件 80 行宽 + 按需分号。JSON 格式化已启用。`.editorconfig` 与 Biome 配置对齐（2-space 缩进）。修改任何代码后应运行 `bun run precheck` 确认无类型/lint/格式/测试问题，pre-commit hook 会自动拦截不合格提交。
 - **tsc 与 Biome 冲突处理** — 当 tsc 要求声明属性（赋值使用）但 biome 报 `noUnusedPrivateClassMembers`（只写不读）时，用 `// biome-ignore lint/correctness/noUnusedPrivateClassMembers: <原因>` 抑制 lint 警告，保留类型声明。`biome ci` 必须零 warnings。
 - **`@ts-expect-error` 维护** — 只在下方代码确实有类型错误时保留 `@ts-expect-error`。如果类型系统已更新导致 directive 变为 unused（TS2578），直接移除注释。MACRO 替换产生的永假比较（如 `'production' === 'development'`）仍需保留 `@ts-expect-error`。

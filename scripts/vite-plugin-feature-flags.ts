@@ -65,12 +65,17 @@ export default function featureFlagsPlugin(): Plugin {
       })
       if (matchCount > 0) modified = true
 
-      // 2. Transpile `using _ = expr;` to `const _ = expr;` for Node.js compat.
-      //    Node.js v22 does not support `using` declarations (Explicit Resource Management).
-      //    Safe because: SLOW_OPERATION_LOGGING is not enabled, so slowLogging returns
-      //    a no-op disposable whose [Symbol.dispose]() is empty.
-      if (transformed.includes('using _')) {
-        transformed = transformed.replace(/\busing\s+(_\w*)\s*=/g, 'const $1 =')
+      // 2. Transpile `using` / `await using` to `const` for Node.js compat.
+      //    Node.js v22 only enables Explicit Resource Management behind
+      //    --js-explicit-resource-management (default off).
+      //    dispose is not called after rewrite — fine for no-op slowLogging;
+      //    real resources (file handles) should use try/finally in source.
+      //    Does not match C# snippets like `using System;` (requires `=`).
+      if (/\b(?:await\s+)?using\s+\w+\s*=/.test(transformed)) {
+        transformed = transformed.replace(
+          /\b(?:await\s+)?using\s+(\w+)\s*=/g,
+          'const $1 =',
+        )
         modified = true
       }
 

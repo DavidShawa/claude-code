@@ -23,11 +23,19 @@ import { getDisplayPath } from 'src/utils/file.js';
 import { formatDuration, formatNumber } from 'src/utils/format.js';
 import { buildSubagentLookups, createAssistantMessage, EMPTY_LOOKUPS } from 'src/utils/messages.js';
 import type { ModelAlias } from 'src/utils/model/aliases.js';
-import { getMainLoopModel, parseUserSpecifiedModel, renderModelName } from 'src/utils/model/model.js';
+import {
+  getDefaultMainLoopModelSetting,
+  getMainLoopModel,
+  parseUserSpecifiedModel,
+  renderModelName,
+} from 'src/utils/model/model.js';
 import type { Theme, ThemeName } from 'src/utils/theme.js';
+import { useAppStateMaybeOutsideOfProvider } from 'src/state/AppState.js';
 import type { outputSchema, Progress, RemoteLaunchedOutput } from './AgentTool.js';
 import { inputSchema } from './AgentTool.js';
+import { resolveAgentToolModelForDisplay } from './agentDisplay.js';
 import { getAgentColor } from './agentColorManager.js';
+import { getBuiltInAgents } from './builtInAgents.js';
 import { GENERAL_PURPOSE_AGENT } from './built-in/generalPurposeAgent.js';
 import { BetaUsage } from '@anthropic-ai/sdk/resources/beta.mjs';
 
@@ -430,6 +438,11 @@ export function renderToolUseMessage({
   return description;
 }
 
+/**
+ * Always show the effective model for this Agent tool call.
+ * Resolves via the same path as runtime (agent definition + tool override +
+ * parent model), so Explore/Plan etc. show haiku even when `model` is omitted.
+ */
 export function renderToolUseTag(
   input: Partial<{
     description: string;
@@ -438,25 +451,37 @@ export function renderToolUseTag(
     model?: ModelAlias;
   }>,
 ): React.ReactNode {
-  const tags: React.ReactNode[] = [];
+  return <AgentToolModelTag model={input.model} subagent_type={input.subagent_type} />;
+}
 
-  if (input.model) {
-    const mainModel = getMainLoopModel();
-    const agentModel = parseUserSpecifiedModel(input.model);
-    if (agentModel !== mainModel) {
-      tags.push(
-        <Box key="model" flexWrap="nowrap" marginLeft={1}>
-          <Text dimColor>{renderModelName(agentModel)}</Text>
-        </Box>,
-      );
-    }
-  }
+function AgentToolModelTag({ model, subagent_type }: { model?: ModelAlias; subagent_type?: string }): React.ReactNode {
+  const activeAgents = useAppStateMaybeOutsideOfProvider(s => s.agentDefinitions.activeAgents);
+  const permissionMode = useAppStateMaybeOutsideOfProvider(s => s.toolPermissionContext.mode);
+  const mainLoopModel = useAppStateMaybeOutsideOfProvider(s => s.mainLoopModel);
+  const mainLoopModelForSession = useAppStateMaybeOutsideOfProvider(s => s.mainLoopModelForSession);
 
-  if (tags.length === 0) {
-    return null;
-  }
+  // Prefer AppState (session override + /model) when inside the provider;
+  // fall back to getMainLoopModel() for tests / non-REPL renders.
+  const parentModel =
+    mainLoopModelForSession != null || mainLoopModel != null
+      ? parseUserSpecifiedModel(mainLoopModelForSession ?? mainLoopModel ?? getDefaultMainLoopModelSetting())
+      : getMainLoopModel();
 
-  return <>{tags}</>;
+  const agents = activeAgents && activeAgents.length > 0 ? activeAgents : getBuiltInAgents();
+  const resolved = resolveAgentToolModelForDisplay(
+    { model, subagent_type },
+    {
+      parentModel,
+      agents,
+      permissionMode: permissionMode ?? 'default',
+    },
+  );
+
+  return (
+    <Box flexWrap="nowrap" marginLeft={1}>
+      <Text dimColor>{renderModelName(resolved)}</Text>
+    </Box>
+  );
 }
 
 const INITIALIZING_TEXT = 'Initializing…';

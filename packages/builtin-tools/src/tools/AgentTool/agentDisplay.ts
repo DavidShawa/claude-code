@@ -3,11 +3,17 @@
  * Used by both the CLI `claude agents` handler and the interactive `/agents` command.
  */
 
-import { getDefaultSubagentModel } from 'src/utils/model/agent.js'
+import type { PermissionMode } from 'src/utils/permissions/PermissionMode.js'
+import type { ModelAlias } from 'src/utils/model/aliases.js'
+import {
+  getAgentModel,
+  getDefaultSubagentModel,
+} from 'src/utils/model/agent.js'
 import {
   getSourceDisplayName,
   type SettingSource,
 } from 'src/utils/settings/constants.js'
+import { GENERAL_PURPOSE_AGENT } from './built-in/generalPurposeAgent.js'
 import type { AgentDefinition } from './loadAgentsDir.js'
 
 type AgentSource = SettingSource | 'built-in' | 'plugin'
@@ -81,6 +87,35 @@ export function resolveAgentModelDisplay(
   const model = agent.model || getDefaultSubagentModel()
   if (!model) return undefined
   return model === 'inherit' ? 'inherit' : model
+}
+
+/**
+ * Resolve the effective model an Agent tool call will use at runtime.
+ *
+ * Mirrors AgentTool.call → getAgentModel(selectedAgent.model, parentModel,
+ * toolModel, permissionMode) so the UI tag always shows the real model,
+ * not only when the LLM passed an explicit `model` override that differs
+ * from the parent.
+ */
+export function resolveAgentToolModelForDisplay(
+  input: {
+    subagent_type?: string
+    model?: ModelAlias
+  },
+  options: {
+    parentModel: string
+    agents: AgentDefinition[]
+    permissionMode?: PermissionMode
+  },
+): string {
+  const agentType = input.subagent_type ?? GENERAL_PURPOSE_AGENT.agentType
+  const agent = options.agents.find(a => a.agentType === agentType)
+  return getAgentModel(
+    agent?.model,
+    options.parentModel,
+    input.model,
+    options.permissionMode ?? 'default',
+  )
 }
 
 /**

@@ -646,32 +646,38 @@ export async function readFileRange(
   offset: number,
   maxBytes: number,
 ): Promise<ReadFileRangeResult | null> {
-  await using fh = await open(path, 'r')
-  const size = (await fh.stat()).size
-  if (size <= offset) {
-    return null
-  }
-  const bytesToRead = Math.min(size - offset, maxBytes)
-  const buffer = Buffer.allocUnsafe(bytesToRead)
-
-  let totalRead = 0
-  while (totalRead < bytesToRead) {
-    const { bytesRead } = await fh.read(
-      buffer,
-      totalRead,
-      bytesToRead - totalRead,
-      offset + totalRead,
-    )
-    if (bytesRead === 0) {
-      break
+  // try/finally instead of `await using` — Node.js leaves Explicit Resource
+  // Management behind --js-explicit-resource-management (default off).
+  const fh = await open(path, 'r')
+  try {
+    const size = (await fh.stat()).size
+    if (size <= offset) {
+      return null
     }
-    totalRead += bytesRead
-  }
+    const bytesToRead = Math.min(size - offset, maxBytes)
+    const buffer = Buffer.allocUnsafe(bytesToRead)
 
-  return {
-    content: buffer.toString('utf8', 0, totalRead),
-    bytesRead: totalRead,
-    bytesTotal: size,
+    let totalRead = 0
+    while (totalRead < bytesToRead) {
+      const { bytesRead } = await fh.read(
+        buffer,
+        totalRead,
+        bytesToRead - totalRead,
+        offset + totalRead,
+      )
+      if (bytesRead === 0) {
+        break
+      }
+      totalRead += bytesRead
+    }
+
+    return {
+      content: buffer.toString('utf8', 0, totalRead),
+      bytesRead: totalRead,
+      bytesTotal: size,
+    }
+  } finally {
+    await fh.close()
   }
 }
 
@@ -683,33 +689,39 @@ export async function tailFile(
   path: string,
   maxBytes: number,
 ): Promise<ReadFileRangeResult> {
-  await using fh = await open(path, 'r')
-  const size = (await fh.stat()).size
-  if (size === 0) {
-    return { content: '', bytesRead: 0, bytesTotal: 0 }
-  }
-  const offset = Math.max(0, size - maxBytes)
-  const bytesToRead = size - offset
-  const buffer = Buffer.allocUnsafe(bytesToRead)
-
-  let totalRead = 0
-  while (totalRead < bytesToRead) {
-    const { bytesRead } = await fh.read(
-      buffer,
-      totalRead,
-      bytesToRead - totalRead,
-      offset + totalRead,
-    )
-    if (bytesRead === 0) {
-      break
+  // try/finally instead of `await using` — Node.js leaves Explicit Resource
+  // Management behind --js-explicit-resource-management (default off).
+  const fh = await open(path, 'r')
+  try {
+    const size = (await fh.stat()).size
+    if (size === 0) {
+      return { content: '', bytesRead: 0, bytesTotal: 0 }
     }
-    totalRead += bytesRead
-  }
+    const offset = Math.max(0, size - maxBytes)
+    const bytesToRead = size - offset
+    const buffer = Buffer.allocUnsafe(bytesToRead)
 
-  return {
-    content: buffer.toString('utf8', 0, totalRead),
-    bytesRead: totalRead,
-    bytesTotal: size,
+    let totalRead = 0
+    while (totalRead < bytesToRead) {
+      const { bytesRead } = await fh.read(
+        buffer,
+        totalRead,
+        bytesToRead - totalRead,
+        offset + totalRead,
+      )
+      if (bytesRead === 0) {
+        break
+      }
+      totalRead += bytesRead
+    }
+
+    return {
+      content: buffer.toString('utf8', 0, totalRead),
+      bytesRead: totalRead,
+      bytesTotal: size,
+    }
+  } finally {
+    await fh.close()
   }
 }
 

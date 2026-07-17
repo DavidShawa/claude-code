@@ -1,8 +1,21 @@
 import { mock, describe, expect, test } from 'bun:test'
 
 // Mock heavy deps
+const getAgentModelMock = mock(
+  (
+    agentModel: string | undefined,
+    parentModel: string,
+    toolSpecifiedModel?: string,
+  ) => {
+    if (toolSpecifiedModel) return `resolved:${toolSpecifiedModel}`
+    if (agentModel === 'inherit' || agentModel === undefined) return parentModel
+    return `resolved:${agentModel}`
+  },
+)
+
 mock.module('src/utils/model/agent.js', () => ({
-  getDefaultSubagentModel: () => undefined,
+  getDefaultSubagentModel: () => 'inherit',
+  getAgentModel: getAgentModelMock,
 }))
 
 mock.module('src/utils/settings/constants.js', () => ({
@@ -21,8 +34,20 @@ mock.module('src/utils/settings/constants.js', () => ({
     'https://json.schemastore.org/claude-code-settings.json',
 }))
 
-const { resolveAgentOverrides, compareAgentsByName, AGENT_SOURCE_GROUPS } =
-  await import('../agentDisplay')
+// generalPurposeAgent pulls loadAgentsDir; stub the agent type only path we need
+mock.module('../built-in/generalPurposeAgent.js', () => ({
+  GENERAL_PURPOSE_AGENT: {
+    agentType: 'general-purpose',
+    source: 'built-in',
+  },
+}))
+
+const {
+  resolveAgentOverrides,
+  compareAgentsByName,
+  AGENT_SOURCE_GROUPS,
+  resolveAgentToolModelForDisplay,
+} = await import('../agentDisplay')
 
 function makeAgent(agentType: string, source: string): any {
   return { agentType, source, name: agentType }
@@ -141,5 +166,60 @@ describe('AGENT_SOURCE_GROUPS', () => {
   test('has unique sources', () => {
     const sources = AGENT_SOURCE_GROUPS.map(g => g.source)
     expect(new Set(sources).size).toBe(sources.length)
+  })
+})
+
+describe('resolveAgentToolModelForDisplay', () => {
+  test('uses agent definition model when tool omits model (e.g. Explore → haiku)', () => {
+    const agents = [
+      { agentType: 'Explore', source: 'built-in', model: 'haiku' },
+    ] as any[]
+    const result = resolveAgentToolModelForDisplay(
+      { subagent_type: 'Explore' },
+      { parentModel: 'claude-sonnet-4-6', agents },
+    )
+    expect(result).toBe('resolved:haiku')
+  })
+
+  test('tool-specified model takes precedence over agent definition', () => {
+    const agents = [
+      { agentType: 'Explore', source: 'built-in', model: 'haiku' },
+    ] as any[]
+    const result = resolveAgentToolModelForDisplay(
+      { subagent_type: 'Explore', model: 'opus' },
+      { parentModel: 'claude-sonnet-4-6', agents },
+    )
+    expect(result).toBe('resolved:opus')
+  })
+
+  test('defaults to general-purpose (inherit → parent) when subagent_type omitted', () => {
+    const agents = [
+      { agentType: 'general-purpose', source: 'built-in' },
+    ] as any[]
+    const result = resolveAgentToolModelForDisplay(
+      {},
+      { parentModel: 'claude-opus-4-6', agents },
+    )
+    // no agent.model → getAgentModel(undefined, parent) → parent
+    expect(result).toBe('claude-opus-4-6')
+  })
+
+  test('unknown agent type falls back to inherit parent model', () => {
+    const result = resolveAgentToolModelForDisplay(
+      { subagent_type: 'custom-missing' },
+      { parentModel: 'claude-sonnet-4-6', agents: [] },
+    )
+    expect(result).toBe('claude-sonnet-4-6')
+  })
+
+  test('always returns a model even when it matches the parent', () => {
+    const agents = [
+      { agentType: 'Plan', source: 'built-in', model: 'inherit' },
+    ] as any[]
+    const result = resolveAgentToolModelForDisplay(
+      { subagent_type: 'Plan' },
+      { parentModel: 'claude-sonnet-4-6', agents },
+    )
+    expect(result).toBe('claude-sonnet-4-6')
   })
 })
