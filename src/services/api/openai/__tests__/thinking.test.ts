@@ -211,26 +211,29 @@ describe('buildOpenAIRequestBody — thinking params', () => {
     expect('prompt_cache_key' in body).toBe(false)
   })
 
-  test('sends reasoning effort with the DeepSeek thinking body', () => {
+  test('sends reasoning effort with all compatible thinking formats', () => {
     const body = buildOpenAIRequestBody({
       ...baseParams,
       enableThinking: true,
       reasoningEffort: 'high',
-    }) as Record<string, unknown>
+    })
     expect(body.reasoning_effort).toBe('high')
     expect(body.thinking).toEqual({ type: 'enabled' })
-    expect('enable_thinking' in body).toBe(false)
-    expect('chat_template_kwargs' in body).toBe(false)
+    expect(body.enable_thinking).toBe(true)
+    expect(body.chat_template_kwargs).toEqual({
+      thinking: true,
+      enable_thinking: true,
+    })
   })
 
   test('does NOT include thinking params when disabled', () => {
     const body = buildOpenAIRequestBody({
       ...baseParams,
       enableThinking: false,
-    }) as Record<string, unknown>
+    })
     expect(body.thinking).toBeUndefined()
-    expect('enable_thinking' in body).toBe(false)
-    expect('chat_template_kwargs' in body).toBe(false)
+    expect(body.enable_thinking).toBeUndefined()
+    expect(body.chat_template_kwargs).toBeUndefined()
   })
 
   test('always includes stream and stream_options', () => {

@@ -29,23 +29,31 @@ const {
 
 describe('resolveOpenAICompatibleEffortSupport', () => {
   test('defaults to enabled when no override is configured', () => {
-    expect(resolveOpenAICompatibleEffortSupport(undefined, undefined)).toBe(
-      true,
-    )
+    expect(
+      resolveOpenAICompatibleEffortSupport(undefined, undefined, undefined),
+    ).toBe(true)
   })
 
   test('disables effort when OPENAI_ENABLE_THINKING is explicitly false', () => {
     for (const value of ['0', 'false', 'no', 'off']) {
-      expect(resolveOpenAICompatibleEffortSupport(value, true)).toBe(false)
+      expect(resolveOpenAICompatibleEffortSupport(value, true, true)).toBe(
+        false,
+      )
     }
   })
 
-  test('disables effort when the tier capability omits thinking', () => {
-    expect(resolveOpenAICompatibleEffortSupport('true', false)).toBe(false)
+  test('enables standard reasoning effort when effort is supported', () => {
+    expect(resolveOpenAICompatibleEffortSupport('true', true, false)).toBe(true)
   })
 
-  test('keeps effort enabled when thinking is explicitly supported', () => {
-    expect(resolveOpenAICompatibleEffortSupport('true', true)).toBe(true)
+  test('supports legacy thinking-only capability declarations', () => {
+    expect(resolveOpenAICompatibleEffortSupport('true', false, true)).toBe(true)
+  })
+
+  test('disables effort when the tier omits both capabilities', () => {
+    expect(resolveOpenAICompatibleEffortSupport('true', false, false)).toBe(
+      false,
+    )
   })
 })
 

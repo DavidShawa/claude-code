@@ -32,9 +32,14 @@ export type EffortValue = EffortLevel | number
 
 export function resolveOpenAICompatibleEffortSupport(
   thinkingEnv: string | undefined,
+  effortCapability: boolean | undefined,
   thinkingCapability: boolean | undefined,
 ): boolean {
-  return !isEnvDefinedFalsy(thinkingEnv) && thinkingCapability !== false
+  if (isEnvDefinedFalsy(thinkingEnv)) return false
+  if (effortCapability === undefined && thinkingCapability === undefined) {
+    return true
+  }
+  return effortCapability === true || thinkingCapability === true
 }
 
 // @[MODEL LAUNCH]: Add the new model to the allowlist if it supports the effort parameter.
@@ -47,6 +52,7 @@ export function modelSupportsEffort(model: string): boolean {
     }
     return resolveOpenAICompatibleEffortSupport(
       process.env.OPENAI_ENABLE_THINKING,
+      get3PModelCapabilityOverride(model, 'effort'),
       get3PModelCapabilityOverride(model, 'thinking'),
     )
   }

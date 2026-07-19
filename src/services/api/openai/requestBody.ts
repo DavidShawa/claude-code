@@ -57,7 +57,8 @@ export function resolveOpenAIMaxTokens(
 /**
  * Build the request body for OpenAI chat.completions.create().
  * Reasoning effort uses the standard top-level `reasoning_effort` field.
- * DeepSeek and MiMo additionally receive `thinking: { type: 'enabled' }`.
+ * Thinking models additionally receive the formats used by official DeepSeek,
+ * self-hosted DeepSeek, vLLM, and MiMo endpoints.
  */
 type OpenAIChatRequestBody = Omit<
   ChatCompletionCreateParamsStreaming,
@@ -65,6 +66,8 @@ type OpenAIChatRequestBody = Omit<
 > & {
   reasoning_effort?: EffortLevel
   thinking?: { type: 'enabled' }
+  enable_thinking?: boolean
+  chat_template_kwargs?: { thinking: boolean; enable_thinking: boolean }
   prompt_cache_key?: string
 }
 
@@ -103,7 +106,11 @@ export function buildOpenAIRequestBody(params: {
     }),
     stream: true,
     stream_options: { include_usage: true },
-    ...(enableThinking && { thinking: { type: 'enabled' as const } }),
+    ...(enableThinking && {
+      thinking: { type: 'enabled' as const },
+      enable_thinking: true,
+      chat_template_kwargs: { thinking: true, enable_thinking: true },
+    }),
     // Only send temperature when thinking mode is off (DeepSeek ignores it anyway,
     // but other providers may respect it)
     ...(!enableThinking &&
